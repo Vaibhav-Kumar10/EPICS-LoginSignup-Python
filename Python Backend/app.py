@@ -6,8 +6,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 
 
-from .models import User, Contact
-from .database import Base, engine, SessionLocal
+from models import User, Contact
+from database import Base, engine, SessionLocal
 
 
 SECRET_KEY = "YOUR_SECRET_KEY"
@@ -227,3 +227,4 @@ def delete_contact(contact_id):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
