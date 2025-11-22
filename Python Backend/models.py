@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, TIMESTAMP, func, ForeignKey
-from .database import Base
+from database import Base
 from sqlalchemy.orm import relationship
 
 
@@ -40,4 +40,5 @@ class Contact(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="contacts")
+
 
