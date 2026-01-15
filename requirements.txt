@@ -7,3 +7,5 @@ Werkzeug
 gevent
 gevent-websocket
 twilio
+gunicorn
+psycopg2-binary
