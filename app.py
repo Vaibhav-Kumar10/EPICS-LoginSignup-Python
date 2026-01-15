@@ -1,4 +1,5 @@
 from gevent import monkey
+
 monkey.patch_all()
 
 import os
@@ -24,15 +25,20 @@ from database import Base, engine, SessionLocal
 SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY")
 
 # Police Webhook URLs - configure these to your police backend endpoints
-POLICE_ALERT_WEBHOOK = os.getenv("POLICE_ALERT_WEBHOOK", "https://fine-flies-cheat.loca.lt/api/receive_alert.php")
-POLICE_LOCATION_WEBHOOK = os.getenv("POLICE_LOCATION_WEBHOOK", "https://fine-flies-cheat.loca.lt/api/update_location.php")
+POLICE_ALERT_WEBHOOK = os.getenv(
+    "POLICE_ALERT_WEBHOOK", "https://fine-flies-cheat.loca.lt/api/receive_alert.php"
+)
+POLICE_LOCATION_WEBHOOK = os.getenv(
+    "POLICE_LOCATION_WEBHOOK",
+    "https://fine-flies-cheat.loca.lt/api/update_location.php",
+)
 
 app = Flask(__name__)
 CORS(app)
 
 # Initialize Socket.IO for real-time SOS alerts
 # async_mode='gevent' is automatically selected if gevent is installed, but we can be explicit
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 
 # Store connected user sockets for real-time notifications
 user_sockets = {}  # {user_id: socket_id}
@@ -40,6 +46,11 @@ active_police_tracking = {}  # {user_id: True} - users currently being tracked b
 
 # Create DB tables
 Base.metadata.create_all(bind=engine)
+
+
+@app.get("/")
+def health():
+    return "OK", 200
 
 
 # --------------------------
@@ -86,23 +97,25 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     Returns distance in meters.
     """
     from math import radians, cos, sin, asin, sqrt
-    
+
     # Convert to radians
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    
+
     # Haversine formula
     dlat = lat2 - lat1
     dlon = lon2 - lon1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
     c = 2 * asin(sqrt(a))
-    
+
     # Radius of earth in meters
     r = 6371000
-    
+
     return c * r
 
 
-def send_email_notification(to_email, subject, user_name, latitude, longitude, timestamp, message):
+def send_email_notification(
+    to_email, subject, user_name, latitude, longitude, timestamp, message
+):
     """
     Send email notification via SMTP (Gmail).
     Uses Gmail SMTP with App Password for authentication.
@@ -110,7 +123,7 @@ def send_email_notification(to_email, subject, user_name, latitude, longitude, t
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
-    
+
     # ---------------------------------------------------------
     # EMAIL CONFIGURATION (Gmail SMTP)
     # ---------------------------------------------------------
@@ -118,14 +131,16 @@ def send_email_notification(to_email, subject, user_name, latitude, longitude, t
     # 1. Enable 2-Factor Authentication on your Google account
     # 2. Create an App Password at: https://myaccount.google.com/apppasswords
     # 3. Use that 16-character app password below
-    
-    sender_email = os.getenv('SENDER_EMAIL')
-    sender_password = os.getenv('SENDER_PASSWORD')  # Gmail App Password - set via environment variable
-    
-    google_maps_link = f'https://www.google.com/maps?q={latitude},{longitude}'
-    
+
+    sender_email = os.getenv("SENDER_EMAIL")
+    sender_password = os.getenv(
+        "SENDER_PASSWORD"
+    )  # Gmail App Password - set via environment variable
+
+    google_maps_link = f"https://www.google.com/maps?q={latitude},{longitude}"
+
     # Create beautiful HTML email
-    html_content = f'''
+    html_content = f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -188,26 +203,26 @@ def send_email_notification(to_email, subject, user_name, latitude, longitude, t
         </div>
     </body>
     </html>
-    '''
-    
+    """
+
     print(f"Attempting to send email to {to_email}...")
-    
+
     try:
         # Create message
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        msg['To'] = to_email
-        
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = sender_email
+        msg["To"] = to_email
+
         # Attach HTML content
-        html_part = MIMEText(html_content, 'html')
+        html_part = MIMEText(html_content, "html")
         msg.attach(html_part)
-        
+
         # Send via Gmail SMTP
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, to_email, msg.as_string())
-        
+
         print(f"  ✓ Email Sent to {to_email}!")
         return True
     except Exception as e:
@@ -231,13 +246,13 @@ def send_push_notification(user_id, title, body, data=None):
     # TODO: Integrate with Firebase
     # import firebase_admin
     # from firebase_admin import messaging
-    # 
+    #
     # Get user's FCM token from database
     # db = get_db()
     # user = db.query(User).filter(User.id == user_id).first()
     # if not user or not user.fcm_token:
     #     return False
-    # 
+    #
     # message = messaging.Message(
     #     notification=messaging.Notification(
     #         title=title,
@@ -246,12 +261,11 @@ def send_push_notification(user_id, title, body, data=None):
     #     data=data or {},
     #     token=user.fcm_token,
     # )
-    # 
+    #
     # response = messaging.send(message)
-    
+
     print(f"[PUSH PLACEHOLDER] Would send to user {user_id}: {title} - {body}")
     return True
-
 
 
 # --------------------------
@@ -349,49 +363,51 @@ def social_login():
     import requests
     import base64
     import json
-    
+
     data = request.json or {}
     id_token = data.get("id_token")
-    
+
     if not id_token:
         return jsonify({"error": "ID token is required"}), 400
-    
+
     try:
         # Firebase ID tokens are JWTs - decode the payload
         # Split the token into parts
-        parts = id_token.split('.')
+        parts = id_token.split(".")
         if len(parts) != 3:
             return jsonify({"error": "Invalid token format"}), 401
-        
+
         # Decode the payload (second part)
         # Add padding if needed
         payload = parts[1]
         padding = 4 - len(payload) % 4
         if padding != 4:
-            payload += '=' * padding
-        
+            payload += "=" * padding
+
         try:
             decoded_payload = base64.urlsafe_b64decode(payload)
             token_data = json.loads(decoded_payload)
         except Exception as e:
             print(f"Failed to decode token: {e}")
             return jsonify({"error": "Invalid token encoding"}), 401
-        
+
         # Extract user info from the token
         email = token_data.get("email")
         name = token_data.get("name") or token_data.get("email", "").split("@")[0]
         firebase_uid = token_data.get("sub") or token_data.get("user_id")
-        
-        print(f"Social login attempt - Email: {email}, Name: {name}, Firebase UID: {firebase_uid}")
-        
+
+        print(
+            f"Social login attempt - Email: {email}, Name: {name}, Firebase UID: {firebase_uid}"
+        )
+
         if not email:
             return jsonify({"error": "Email not found in token"}), 400
-        
+
         db = get_db()
         try:
             # Try to find existing user by email
             user = db.query(User).filter(User.email == email).first()
-            
+
             if not user:
                 # Create new user for social login (no password needed)
                 user = User(
@@ -405,17 +421,19 @@ def social_login():
                 print(f"✓ Created new social login user: {email}")
             else:
                 print(f"✓ Existing user logged in via social: {email}")
-            
+
             # Create JWT token for the app
             token = create_token({"user_id": user.id, "role": user.role})
-            return jsonify({
-                "access_token": token,
-                "token_type": "bearer",
-                "user_id": user.id,
-            })
+            return jsonify(
+                {
+                    "access_token": token,
+                    "token_type": "bearer",
+                    "user_id": user.id,
+                }
+            )
         finally:
             db.close()
-            
+
     except Exception as e:
         print(f"Social login error: {e}")
         return jsonify({"error": f"Social login failed: {str(e)}"}), 500
@@ -467,9 +485,17 @@ def update_user():
 
         # Allow updating these fields
         allowed_fields = [
-            "full_name", "email", "phone", "age", "gender", 
-            "aadhar_number", "address", "avatar_id", "avatar_url",
-            "dob", "blood_group"
+            "full_name",
+            "email",
+            "phone",
+            "age",
+            "gender",
+            "aadhar_number",
+            "address",
+            "avatar_id",
+            "avatar_url",
+            "dob",
+            "blood_group",
         ]
 
         for field in allowed_fields:
@@ -488,29 +514,29 @@ def update_user():
 @require_auth
 def upload_avatar():
     """Uploads user avatar."""
-    if 'avatar' not in request.files:
+    if "avatar" not in request.files:
         return jsonify({"error": "No file part"}), 400
-    
-    file = request.files['avatar']
-    if file.filename == '':
+
+    file = request.files["avatar"]
+    if file.filename == "":
         return jsonify({"error": "No selected file"}), 400
-        
+
     if file:
         import os
         from werkzeug.utils import secure_filename
-        
+
         # Create uploads directory if not exists
-        upload_folder = 'static/uploads/avatars'
+        upload_folder = "static/uploads/avatars"
         os.makedirs(upload_folder, exist_ok=True)
-        
+
         filename = secure_filename(f"user_{request.user['user_id']}_{file.filename}")
         file_path = os.path.join(upload_folder, filename)
         file.save(file_path)
-        
+
         # Generate URL (assuming static files are served)
         # In production, use a proper file server or cloud storage
         avatar_url = f"{request.host_url}{upload_folder}/{filename}"
-        
+
         # Update user record
         db = get_db()
         try:
@@ -520,7 +546,7 @@ def upload_avatar():
                 db.commit()
         finally:
             db.close()
-            
+
         return jsonify({"message": "Avatar uploaded", "avatar_url": avatar_url})
 
 
@@ -564,7 +590,13 @@ def list_contacts():
 
         return jsonify(
             [
-                {"id": c.id, "name": c.name, "phone": c.phone, "email": c.email, "relation": c.relation}
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "phone": c.phone,
+                    "email": c.email,
+                    "relation": c.relation,
+                }
                 for c in contacts
             ]
         )
@@ -634,76 +666,80 @@ def get_user_history():
 # SOCKET.IO HANDLERS FOR SOS
 # --------------------------
 
-@socketio.on('connect')
+
+@socketio.on("connect")
 def handle_connect():
     """Handle client connection"""
-    print(f'Client connected: {request.sid}')
+    print(f"Client connected: {request.sid}")
 
-@socketio.on('disconnect')
+
+@socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnection"""
-    print(f'Client disconnected: {request.sid}')
+    print(f"Client disconnected: {request.sid}")
     # Remove from user_sockets
     for user_id, sid in list(user_sockets.items()):
         if sid == request.sid:
             del user_sockets[user_id]
-            print(f'Removed user {user_id} from active sockets')
+            print(f"Removed user {user_id} from active sockets")
             break
 
-@socketio.on('identify')
+
+@socketio.on("identify")
 def handle_identify(data):
     """Register user's socket for targeted messaging"""
-    user_id = data.get('user_id')
+    user_id = data.get("user_id")
     if user_id:
         user_sockets[user_id] = request.sid
-        print(f'User {user_id} identified with socket {request.sid}')
-        emit('identified', {'status': 'success', 'user_id': user_id})
+        print(f"User {user_id} identified with socket {request.sid}")
+        emit("identified", {"status": "success", "user_id": user_id})
 
-@socketio.on('trigger_sos')
+
+@socketio.on("trigger_sos")
 def handle_sos(data):
     """
     Handle SOS alert trigger:
     1. Send SMS to family members (emergency contacts) - regardless of distance
     2. Broadcast alert to ALL connected users - they calculate proximity client-side
     """
-    print(f'SOS triggered: {data}')
-    
-    user_id = data.get('user_id')
-    latitude = data.get('latitude')
-    longitude = data.get('longitude')
-    timestamp = data.get('timestamp')
-    message = data.get('message', 'Emergency SOS Alert')
-    
+    print(f"SOS triggered: {data}")
+
+    user_id = data.get("user_id")
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    timestamp = data.get("timestamp")
+    message = data.get("message", "Emergency SOS Alert")
+
     if not all([user_id, latitude, longitude]):
-        emit('sos_error', {'error': 'Missing required SOS data'})
+        emit("sos_error", {"error": "Missing required SOS data"})
         return
-    
+
     db = get_db()
     try:
         # Get user details
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            emit('sos_error', {'error': 'User not found'})
+            emit("sos_error", {"error": "User not found"})
             return
-        
+
         # Get user's emergency contacts (family members)
         contacts = db.query(Contact).filter(Contact.user_id == user_id).all()
-        
+
         # Prepare alert data
         alert_data = {
-            'user_id': user_id,
-            'user_name': user.full_name,
-            'user_phone': user.phone,
-            'latitude': latitude,
-            'longitude': longitude,
-            'timestamp': timestamp,
-            'message': message,
-            'google_maps_link': f'https://www.google.com/maps?q={latitude},{longitude}'
+            "user_id": user_id,
+            "user_name": user.full_name,
+            "user_phone": user.phone,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timestamp": timestamp,
+            "message": message,
+            "google_maps_link": f"https://www.google.com/maps?q={latitude},{longitude}",
         }
-        
-        print(f'SOS Alert from {user.full_name}: {latitude}, {longitude}')
-        print(f'Processing notifications...')
-        
+
+        print(f"SOS Alert from {user.full_name}: {latitude}, {longitude}")
+        print(f"Processing notifications...")
+
         # ========================================
         # 1. NOTIFY EMERGENCY CONTACTS (FAMILY) VIA EMAIL
         # ========================================
@@ -711,7 +747,7 @@ def handle_sos(data):
         for contact in contacts:
             # Send Email to each emergency contact that has an email
             contact_email = contact.email if contact.email else None
-            
+
             if contact_email:
                 if send_email_notification(
                     to_email=contact_email,
@@ -720,15 +756,17 @@ def handle_sos(data):
                     latitude=latitude,
                     longitude=longitude,
                     timestamp=timestamp,
-                    message=message
+                    message=message,
                 ):
                     contacts_notified += 1
-                    print(f"  ✓ Email sent to {contact.name} ({contact.relation}): {contact_email}")
+                    print(
+                        f"  ✓ Email sent to {contact.name} ({contact.relation}): {contact_email}"
+                    )
             else:
                 print(f"  ⚠️ No email for contact {contact.name}, skipping...")
-        
-        print(f'Notified {contacts_notified} emergency contacts via Email')
-        
+
+        print(f"Notified {contacts_notified} emergency contacts via Email")
+
         # ========================================
         # 2. BROADCAST TO ALL CONNECTED USERS
         # (Client devices will calculate distance and show notification if < 1km)
@@ -737,42 +775,42 @@ def handle_sos(data):
         for uid, socket_id in user_sockets.items():
             # Don't send to the user who triggered the alert
             if uid != user_id:
-                socketio.emit('nearby_sos_alert', alert_data, room=socket_id)
+                socketio.emit("nearby_sos_alert", alert_data, room=socket_id)
                 broadcast_count += 1
-        
-        print(f'Broadcasted alert to {broadcast_count} connected users')
-        print(f'  → Clients will check proximity and notify if within 1km')
-        
+
+        print(f"Broadcasted alert to {broadcast_count} connected users")
+        print(f"  → Clients will check proximity and notify if within 1km")
+
         # ========================================
         # 2.5 POLICE TRACKING (if this is a police alert)
         # ========================================
-        if 'Police' in message:
-            print(f'🚔 Police Alert detected - initiating police tracking...')
-            
+        if "Police" in message:
+            print(f"🚔 Police Alert detected - initiating police tracking...")
+
             # Mark user for live tracking
             active_police_tracking[user_id] = True
-            
+
             # Prepare full profile for police
             police_profile_data = {
-                'user_id': user_id,
-                'full_name': user.full_name,
-                'phone': user.phone,
-                'email': user.email,
-                'age': user.age,
-                'gender': user.gender,
-                'aadhar_number': user.aadhar_number,
-                'address': user.address,
-                'initial_latitude': latitude,
-                'initial_longitude': longitude,
-                'timestamp': timestamp,
-                'message': message,
-                'google_maps_link': f'https://www.google.com/maps?q={latitude},{longitude}',
-                'emergency_contacts': [
-                    {'name': c.name, 'phone': c.phone, 'relation': c.relation}
+                "user_id": user_id,
+                "full_name": user.full_name,
+                "phone": user.phone,
+                "email": user.email,
+                "age": user.age,
+                "gender": user.gender,
+                "aadhar_number": user.aadhar_number,
+                "address": user.address,
+                "initial_latitude": latitude,
+                "initial_longitude": longitude,
+                "timestamp": timestamp,
+                "message": message,
+                "google_maps_link": f"https://www.google.com/maps?q={latitude},{longitude}",
+                "emergency_contacts": [
+                    {"name": c.name, "phone": c.phone, "relation": c.relation}
                     for c in contacts
-                ]
+                ],
             }
-            
+
             # Send profile to police webhook (one-time)
             try:
                 webhook_response = requests.post(
@@ -781,33 +819,37 @@ def handle_sos(data):
                     timeout=10,
                     verify=False,
                     headers={
-                        'ngrok-skip-browser-warning': 'true',
-                        'User-Agent': 'SafeGuard-Backend/1.0',
-                        'Content-Type': 'application/json'
-                    }
+                        "ngrok-skip-browser-warning": "true",
+                        "User-Agent": "SafeGuard-Backend/1.0",
+                        "Content-Type": "application/json",
+                    },
                 )
-                print(f'  ✓ Police webhook notified: {webhook_response.status_code}')
+                print(f"  ✓ Police webhook notified: {webhook_response.status_code}")
             except Exception as e:
-                print(f'  ⚠️ Police webhook failed: {e}')
-            
+                print(f"  ⚠️ Police webhook failed: {e}")
+
             # Tell app to start streaming live location
             user_socket_id = user_sockets.get(user_id)
             if user_socket_id:
-                socketio.emit('start_live_tracking', {'tracking_id': user_id}, room=user_socket_id)
-                print(f'  ✓ Sent start_live_tracking to user socket')
-        
-        
+                socketio.emit(
+                    "start_live_tracking", {"tracking_id": user_id}, room=user_socket_id
+                )
+                print(f"  ✓ Sent start_live_tracking to user socket")
+
         # ========================================
         # 3. SEND CONFIRMATION TO TRIGGERING USER
         # ========================================
-        emit('sos_confirmed', {
-            'status': 'success',
-            'message': 'SOS alert sent successfully',
-            'contacts_notified': contacts_notified,
-            'broadcast_to_users': broadcast_count,
-        })
-        
-        print(f'✓ SOS Processing Complete:')
+        emit(
+            "sos_confirmed",
+            {
+                "status": "success",
+                "message": "SOS alert sent successfully",
+                "contacts_notified": contacts_notified,
+                "broadcast_to_users": broadcast_count,
+            },
+        )
+
+        print(f"✓ SOS Processing Complete:")
         # ========================================
         # 4. LOG TO HISTORY
         # ========================================
@@ -823,7 +865,6 @@ def handle_sos(data):
         except Exception as e:
             print(f"  Ref failed to log history: {e}")
 
-        
     finally:
         db.close()
 
@@ -832,31 +873,32 @@ def handle_sos(data):
 # SOCKET.IO HANDLERS FOR POLICE LIVE TRACKING
 # --------------------------
 
-@socketio.on('live_location_update')
+
+@socketio.on("live_location_update")
 def handle_live_location(data):
     """
     Receive continuous location updates from app during police tracking.
     Forward to police webhook in real-time.
     """
-    user_id = data.get('user_id')
-    latitude = data.get('latitude')
-    longitude = data.get('longitude')
-    timestamp = data.get('timestamp')
-    
+    user_id = data.get("user_id")
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    timestamp = data.get("timestamp")
+
     if not user_id or user_id not in active_police_tracking:
         # Not being tracked, ignore
         return
-    
-    print(f'📍 Live location from user {user_id}: {latitude}, {longitude}')
-    
+
+    print(f"📍 Live location from user {user_id}: {latitude}, {longitude}")
+
     location_data = {
-        'user_id': user_id,
-        'latitude': latitude,
-        'longitude': longitude,
-        'timestamp': timestamp,
-        'google_maps_link': f'https://www.google.com/maps?q={latitude},{longitude}'
+        "user_id": user_id,
+        "latitude": latitude,
+        "longitude": longitude,
+        "timestamp": timestamp,
+        "google_maps_link": f"https://www.google.com/maps?q={latitude},{longitude}",
     }
-    
+
     # Forward to police webhook
     try:
         response = requests.post(
@@ -865,31 +907,32 @@ def handle_live_location(data):
             timeout=5,
             verify=False,
             headers={
-                'ngrok-skip-browser-warning': 'true',
-                'User-Agent': 'SafeGuard-Backend/1.0',
-                'Content-Type': 'application/json'
-            }
+                "ngrok-skip-browser-warning": "true",
+                "User-Agent": "SafeGuard-Backend/1.0",
+                "Content-Type": "application/json",
+            },
         )
-        print(f'  → Forwarded to police webhook: {response.status_code}')
+        print(f"  → Forwarded to police webhook: {response.status_code}")
     except Exception as e:
-        print(f'  ⚠️ Webhook forward failed: {e}')
+        print(f"  ⚠️ Webhook forward failed: {e}")
 
 
-@socketio.on('stop_police_tracking')
+@socketio.on("stop_police_tracking")
 def handle_stop_tracking(data):
     """Stop police tracking for a user."""
-    user_id = data.get('user_id')
+    user_id = data.get("user_id")
     if user_id in active_police_tracking:
         del active_police_tracking[user_id]
-        print(f'🛑 Stopped police tracking for user {user_id}')
-        emit('tracking_stopped', {'status': 'success'})
+        print(f"🛑 Stopped police tracking for user {user_id}")
+        emit("tracking_stopped", {"status": "success"})
 
 
 # --------------------------
 # SOCKET.IO HANDLERS FOR LOCATION HELP REQUEST
 # --------------------------
 
-@socketio.on('location_help_request')
+
+@socketio.on("location_help_request")
 def handle_location_help_request(data):
     """
     Share-location help request:
@@ -902,15 +945,15 @@ def handle_location_help_request(data):
     print("\n" + "-" * 50)
     print(f"[ShareLocation] Received help request payload: {data}")
 
-    user_id = (data or {}).get('user_id')
-    latitude = (data or {}).get('latitude')
-    longitude = (data or {}).get('longitude')
-    timestamp = (data or {}).get('timestamp')
-    message = (data or {}).get('message', 'Help needed — location shared')
+    user_id = (data or {}).get("user_id")
+    latitude = (data or {}).get("latitude")
+    longitude = (data or {}).get("longitude")
+    timestamp = (data or {}).get("timestamp")
+    message = (data or {}).get("message", "Help needed — location shared")
 
     if not all([user_id, latitude, longitude]):
         print("[ShareLocation] ❌ Missing required fields (user_id/latitude/longitude)")
-        emit('location_help_error', {'error': 'Missing required location data'})
+        emit("location_help_error", {"error": "Missing required location data"})
         return
 
     db = get_db()
@@ -919,19 +962,19 @@ def handle_location_help_request(data):
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             print("[ShareLocation] ❌ User not found")
-            emit('location_help_error', {'error': 'User not found'})
+            emit("location_help_error", {"error": "User not found"})
             return
 
         alert_data = {
-            'user_id': user_id,
-            'user_name': user.full_name,
-            'user_phone': user.phone,
-            'latitude': latitude,
-            'longitude': longitude,
-            'timestamp': timestamp,
-            'message': message,
-            'google_maps_link': f'https://www.google.com/maps?q={latitude},{longitude}',
-            'type': 'location_help',
+            "user_id": user_id,
+            "user_name": user.full_name,
+            "user_phone": user.phone,
+            "latitude": latitude,
+            "longitude": longitude,
+            "timestamp": timestamp,
+            "message": message,
+            "google_maps_link": f"https://www.google.com/maps?q={latitude},{longitude}",
+            "type": "location_help",
         }
 
         print("[ShareLocation] Step 2/4: Prepared alert payload")
@@ -942,17 +985,24 @@ def handle_location_help_request(data):
         broadcast_count = 0
         for uid, socket_id in user_sockets.items():
             if uid != user_id:
-                socketio.emit('nearby_location_help', alert_data, room=socket_id)
+                socketio.emit("nearby_location_help", alert_data, room=socket_id)
                 broadcast_count += 1
 
-        print(f"[ShareLocation] ✅ Broadcast completed to {broadcast_count} connected users")
-        print("[ShareLocation]  → Each client will compute distance and notify if within 5km")
+        print(
+            f"[ShareLocation] ✅ Broadcast completed to {broadcast_count} connected users"
+        )
+        print(
+            "[ShareLocation]  → Each client will compute distance and notify if within 5km"
+        )
 
         # Confirmation to sender
-        emit('location_help_confirmed', {
-            'status': 'success',
-            'broadcast_to_users': broadcast_count,
-        })
+        emit(
+            "location_help_confirmed",
+            {
+                "status": "success",
+                "broadcast_to_users": broadcast_count,
+            },
+        )
 
         print("[ShareLocation] Step 4/4: Confirmation emitted to sender")
 
@@ -973,12 +1023,10 @@ def handle_location_help_request(data):
         print("-" * 50 + "\n")
 
 
-
-
-
 # --------------------------
 # TEST ENDPOINT FOR SIMULATING NEARBY SOS
 # --------------------------
+
 
 @app.post("/test/simulate_nearby_sos")
 def simulate_nearby_sos():
@@ -987,54 +1035,55 @@ def simulate_nearby_sos():
     Useful for testing the proximity notification system without multiple devices.
     """
     data = request.json or {}
-    
+
     # You can provide coordinates, or it will use a default location near Bhopal
-    test_lat = data.get('latitude', 23.0730)  # ~600m north of your location
-    test_lng = data.get('longitude', 76.8600)
-    test_user_name = data.get('user_name', 'Test User')
-    
+    test_lat = data.get("latitude", 23.0730)  # ~600m north of your location
+    test_lng = data.get("longitude", 76.8600)
+    test_user_name = data.get("user_name", "Test User")
+
     # Create fake alert data
     fake_alert = {
-        'user_id': 999,  # Fake user ID
-        'user_name': test_user_name,
-        'user_phone': '+919999999999',
-        'latitude': test_lat,
-        'longitude': test_lng,
-        'timestamp': datetime.now().isoformat(),
-        'message': 'TEST Emergency SOS Alert',
-        'google_maps_link': f'https://www.google.com/maps?q={test_lat},{test_lng}'
+        "user_id": 999,  # Fake user ID
+        "user_name": test_user_name,
+        "user_phone": "+919999999999",
+        "latitude": test_lat,
+        "longitude": test_lng,
+        "timestamp": datetime.now().isoformat(),
+        "message": "TEST Emergency SOS Alert",
+        "google_maps_link": f"https://www.google.com/maps?q={test_lat},{test_lng}",
     }
-    
-    print(f'🧪 TEST: Simulating nearby SOS from {test_user_name}')
-    print(f'📍 Location: {test_lat}, {test_lng}')
-    
+
+    print(f"🧪 TEST: Simulating nearby SOS from {test_user_name}")
+    print(f"📍 Location: {test_lat}, {test_lng}")
+
     # Broadcast to all connected users
     broadcast_count = 0
     for uid, socket_id in user_sockets.items():
-        socketio.emit('nearby_sos_alert', fake_alert, room=socket_id)
+        socketio.emit("nearby_sos_alert", fake_alert, room=socket_id)
         broadcast_count += 1
-    
-    print(f'✓ Broadcasted test alert to {broadcast_count} connected users')
-    
-    return jsonify({
-        'status': 'success',
-        'message': 'Test SOS alert broadcasted',
-        'alert_data': fake_alert,
-        'broadcast_to': broadcast_count
-    })
+
+    print(f"✓ Broadcasted test alert to {broadcast_count} connected users")
+
+    return jsonify(
+        {
+            "status": "success",
+            "message": "Test SOS alert broadcasted",
+            "alert_data": fake_alert,
+            "broadcast_to": broadcast_count,
+        }
+    )
 
 
 from datetime import datetime
 
 
-if __name__ == "__main__":
-    # Use socketio.run instead of app.run for Socket.IO support
-    # Bind to 0.0.0.0 so emulators/devices can reach the server
-    # allow_unsafe_werkzeug is not needed/supported with gevent
-    print("\n" + "="*50)
-    print("🚀 SafeGuard Backend Server Starting...")
-    print("📡 Running on http://0.0.0.0:5000")
-    print("📱 Ready for mobile app connections!")
-    print("="*50 + "\n")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
-
+# if __name__ == "__main__":
+#     # Use socketio.run instead of app.run for Socket.IO support
+#     # Bind to 0.0.0.0 so emulators/devices can reach the server
+#     # allow_unsafe_werkzeug is not needed/supported with gevent
+#     print("\n" + "=" * 50)
+#     print("🚀 SafeGuard Backend Server Starting...")
+#     print("📡 Running on http://0.0.0.0:5000")
+#     print("📱 Ready for mobile app connections!")
+#     print("=" * 50 + "\n")
+#     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
