@@ -11,4 +11,5 @@ FindMy
 cryptography
 apscheduler
 psycopg2-binary
-gunicorn 
+gunicorn
+Flask-SocketIO
