@@ -17,7 +17,8 @@ import urllib3
 # Disable SSL warnings for ngrok
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-from models import User, Contact, History
+from models import User, Contact, History, Tracker
+from tracker_service import poll_tracker_locations, get_tracker_location
 from database import Base, engine, SessionLocal
 
 
@@ -26,11 +27,11 @@ SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY")
 
 # Police Webhook URLs - configure these to your police backend endpoints
 POLICE_ALERT_WEBHOOK = os.getenv(
-    "POLICE_ALERT_WEBHOOK", "https://fine-flies-cheat.loca.lt/api/receive_alert.php"
+    "POLICE_ALERT_WEBHOOK", "https://safeguard-police.loca.lt/api/receive_alert.php"
 )
 POLICE_LOCATION_WEBHOOK = os.getenv(
     "POLICE_LOCATION_WEBHOOK",
-    "https://fine-flies-cheat.loca.lt/api/update_location.php",
+    "https://safeguard-police.loca.lt/api/update_location.php",
 )
 
 app = Flask(__name__)
@@ -43,14 +44,62 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
 # Store connected user sockets for real-time notifications
 user_sockets = {}  # {user_id: socket_id}
 active_police_tracking = {}  # {user_id: True} - users currently being tracked by police
-
-# Create DB tables
-Base.metadata.create_all(bind=engine)
+last_phone_update = {}  # {user_id: datetime} - timestamp of last phone location update
 
 
-@app.get("/")
-def health():
-    return "OK", 200
+def init_db(retries=10, delay_seconds=5):
+    from sqlalchemy import exc
+    import time
+
+    print(f"🔌 DATABASE_URL: {os.getenv('DATABASE_URL', 'sqlite:///women_safety.db')}")
+
+    for attempt in range(1, retries + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            print("✅ Database schema ready")
+            return
+        except exc.OperationalError as err:
+            print(
+                f"⚠️  Database unavailable (attempt {attempt}/{retries}): {err}. Retrying in {delay_seconds}s..."
+            )
+            time.sleep(delay_seconds)
+
+    raise RuntimeError("Failed to initialize database after multiple attempts")
+
+
+# Create DB tables (with retry for cloud startup race conditions)
+init_db()
+
+
+# ---------------------------------------------------------
+# HEALTH CHECK ENDPOINT
+# ---------------------------------------------------------
+@app.route("/health")
+def health_check():
+    """Health check endpoint."""
+    return jsonify({"status": "ok", "message": "SafeGuard Backend is running!"})
+
+
+# --------------------------
+# BACKGROUND TRACKER POLLING
+# --------------------------
+try:
+    from apscheduler.schedulers.gevent import GeventScheduler
+
+    tracker_scheduler = GeventScheduler()
+    tracker_scheduler.add_job(
+        poll_tracker_locations,
+        "interval",
+        minutes=5,
+        id="tracker_poll",
+        name="Poll ESP32 Tracker Locations",
+        max_instances=1,
+    )
+    tracker_scheduler.start()
+    print("📡 Tracker polling scheduler started (every 5 minutes)")
+except Exception as e:
+    print(f"⚠️ Tracker scheduler failed to start: {e}")
+    print("   Tracker locations will not be auto-updated.")
 
 
 # --------------------------
@@ -132,10 +181,10 @@ def send_email_notification(
     # 2. Create an App Password at: https://myaccount.google.com/apppasswords
     # 3. Use that 16-character app password below
 
-    sender_email = os.getenv("SENDER_EMAIL")
+    sender_email = os.getenv("SENDER_EMAIL", "prkm.bdo.am@gmail.com")
     sender_password = os.getenv(
-        "SENDER_PASSWORD"
-    )  # Gmail App Password - set via environment variable
+        "SENDER_PASSWORD", "lskh cmal snnp ucio"
+    )  # Gmail App Password
 
     google_maps_link = f"https://www.google.com/maps?q={latitude},{longitude}"
 
@@ -663,6 +712,139 @@ def get_user_history():
 
 
 # --------------------------
+# TRACKER MANAGEMENT ENDPOINTS
+# --------------------------
+
+
+@app.post("/tracker/link")
+@require_auth
+def link_tracker():
+    """
+    Link an ESP32 tracker to the authenticated user.
+    The user provides a device_code (e.g. 'TRK-001') that was
+    pre-registered when the ESP32 was manufactured.
+    """
+    data = request.json or {}
+    device_code = data.get("device_code", "").strip()
+
+    if not device_code:
+        return jsonify({"error": "Device code is required"}), 400
+
+    db = get_db()
+    try:
+        tracker = db.query(Tracker).filter(Tracker.device_code == device_code).first()
+
+        if not tracker:
+            return jsonify({"error": "Invalid device code. Tracker not found."}), 404
+
+        if tracker.user_id and tracker.user_id != request.user["user_id"]:
+            return (
+                jsonify({"error": "This tracker is already linked to another user"}),
+                409,
+            )
+
+        tracker.user_id = request.user["user_id"]
+        tracker.is_active = True
+        db.commit()
+
+        return jsonify(
+            {
+                "message": "Tracker linked successfully",
+                "device_name": tracker.device_name,
+                "device_code": tracker.device_code,
+            }
+        )
+    finally:
+        db.close()
+
+
+@app.get("/tracker/location")
+@require_auth
+def get_tracker_loc():
+    """
+    Get the last known location of the user's linked ESP32 tracker.
+    """
+    location = get_tracker_location(request.user["user_id"])
+
+    if not location:
+        return jsonify({"error": "No tracker location available"}), 404
+
+    return jsonify(location)
+
+
+@app.get("/tracker/status")
+@require_auth
+def tracker_status():
+    """
+    Check if the user has a linked tracker and its status.
+    """
+    db = get_db()
+    try:
+        tracker = (
+            db.query(Tracker).filter(Tracker.user_id == request.user["user_id"]).first()
+        )
+
+        if not tracker:
+            return jsonify({"linked": False})
+
+        return jsonify(
+            {
+                "linked": True,
+                "device_name": tracker.device_name,
+                "device_code": tracker.device_code,
+                "is_active": tracker.is_active,
+                "has_location": tracker.last_latitude is not None,
+                "last_seen": (
+                    tracker.last_seen.isoformat() if tracker.last_seen else None
+                ),
+            }
+        )
+    finally:
+        db.close()
+
+
+@app.post("/tracker/register")
+def register_tracker():
+    """
+    Admin endpoint to register a new ESP32 tracker in the system.
+    Called once per physical device when it is manufactured/configured.
+    """
+    data = request.json or {}
+    device_code = data.get("device_code")
+    private_key_path = data.get("private_key_path")
+    device_name = data.get("device_name", "ESP32 Tracker")
+    adv_key_b64 = data.get("adv_key_b64")
+
+    if not device_code or not private_key_path:
+        return jsonify({"error": "device_code and private_key_path are required"}), 400
+
+    db = get_db()
+    try:
+        existing = db.query(Tracker).filter(Tracker.device_code == device_code).first()
+        if existing:
+            return jsonify({"error": "Device code already registered"}), 409
+
+        tracker = Tracker(
+            device_code=device_code,
+            private_key_path=private_key_path,
+            device_name=device_name,
+            adv_key_b64=adv_key_b64,
+        )
+        db.add(tracker)
+        db.commit()
+
+        return jsonify(
+            {
+                "message": "Tracker registered",
+                "tracker_id": tracker.id,
+                "device_code": device_code,
+            }
+        )
+    finally:
+        db.close()
+
+
+# --------------------------
 # SOCKET.IO HANDLERS FOR SOS
 # --------------------------
 
@@ -879,6 +1061,7 @@ def handle_live_location(data):
     """
     Receive continuous location updates from app during police tracking.
     Forward to police webhook in real-time.
+    Tracks last update time — if phone goes silent, tracker fallback kicks in.
     """
     user_id = data.get("user_id")
     latitude = data.get("latitude")
@@ -889,6 +1072,9 @@ def handle_live_location(data):
         # Not being tracked, ignore
         return
 
+    # Record that phone is still alive
+    last_phone_update[user_id] = datetime.now()
+
     print(f"📍 Live location from user {user_id}: {latitude}, {longitude}")
 
     location_data = {
@@ -896,6 +1082,7 @@ def handle_live_location(data):
         "latitude": latitude,
         "longitude": longitude,
         "timestamp": timestamp,
+        "location_source": "phone",
         "google_maps_link": f"https://www.google.com/maps?q={latitude},{longitude}",
     }
 
@@ -915,6 +1102,69 @@ def handle_live_location(data):
         print(f"  → Forwarded to police webhook: {response.status_code}")
     except Exception as e:
         print(f"  ⚠️ Webhook forward failed: {e}")
+
+
+def _check_tracker_fallback():
+    """
+    Background check: For users being actively tracked by police,
+    if their phone hasn't sent a location update in >2 minutes,
+    fall back to the ESP32 tracker location.
+    """
+    now = datetime.now()
+    for user_id in list(active_police_tracking.keys()):
+        last_update = last_phone_update.get(user_id)
+        if last_update is None:
+            continue
+
+        seconds_since_update = (now - last_update).total_seconds()
+        if seconds_since_update > 120:  # 2 minutes without phone update
+            print(
+                f"📡 Phone silent for user {user_id} ({int(seconds_since_update)}s) — trying tracker fallback"
+            )
+
+            tracker_loc = get_tracker_location(user_id)
+            if tracker_loc:
+                fallback_data = {
+                    "user_id": user_id,
+                    "latitude": tracker_loc["latitude"],
+                    "longitude": tracker_loc["longitude"],
+                    "timestamp": tracker_loc["last_seen"],
+                    "location_source": "tracker",
+                    "google_maps_link": tracker_loc["google_maps_link"],
+                }
+                try:
+                    response = requests.post(
+                        POLICE_LOCATION_WEBHOOK,
+                        json=fallback_data,
+                        timeout=5,
+                        verify=False,
+                        headers={
+                            "ngrok-skip-browser-warning": "true",
+                            "User-Agent": "SafeGuard-Backend/1.0",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    print(
+                        f"  → Tracker fallback sent to police: {response.status_code}"
+                    )
+                except Exception as e:
+                    print(f"  ⚠️ Tracker fallback webhook failed: {e}")
+            else:
+                print(f"  — No tracker location available for user {user_id}")
+
+
+# Schedule tracker fallback check every 30 seconds
+try:
+    tracker_scheduler.add_job(
+        _check_tracker_fallback,
+        "interval",
+        seconds=30,
+        id="tracker_fallback_check",
+        name="Check if phone went silent & use tracker fallback",
+        max_instances=1,
+    )
+except Exception as e:
+    print(f"⚠️ Tracker fallback scheduler not started: {e}")
 
 
 @socketio.on("stop_police_tracking")
@@ -1074,16 +1324,19 @@ def simulate_nearby_sos():
     )
 
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
-# if __name__ == "__main__":
-#     # Use socketio.run instead of app.run for Socket.IO support
-#     # Bind to 0.0.0.0 so emulators/devices can reach the server
-#     # allow_unsafe_werkzeug is not needed/supported with gevent
-#     print("\n" + "=" * 50)
-#     print("🚀 SafeGuard Backend Server Starting...")
-#     print("📡 Running on http://0.0.0.0:5000")
-#     print("📱 Ready for mobile app connections!")
-#     print("=" * 50 + "\n")
-#     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+if __name__ == "__main__":
+    # Use socketio.run instead of app.run for Socket.IO support.
+    # Bind to 0.0.0.0 so external clients (Render / mobile devices) can reach it.
+    port = int(os.getenv("PORT", 5000))
+    host = os.getenv("HOST", "0.0.0.0")
+
+    print("\n" + "=" * 50)
+    print("🚀 SafeGuard Backend Server Starting...")
+    print(f"📡 Running on http://{host}:{port}")
+    print("📱 Ready for mobile app connections!")
+    print("=" * 50 + "\n")
+
+    socketio.run(app, host=host, port=port, debug=False)

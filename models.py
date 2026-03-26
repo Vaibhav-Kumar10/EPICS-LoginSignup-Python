@@ -3,11 +3,9 @@ from database import Base
 from sqlalchemy.orm import relationship
 
 
-
 # --------------------------
 # DATABASE MODELS
 # --------------------------
-
 
 
 class User(Base):
@@ -15,7 +13,9 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String, nullable=False, index=True)
-    phone = Column(String, unique=True, nullable=True, index=True)  # Nullable for social login
+    phone = Column(
+        String, unique=True, nullable=True, index=True
+    )  # Nullable for social login
     email = Column(String, unique=True, nullable=True)
     dob = Column(String, nullable=True)
     blood_group = Column(String, nullable=True)
@@ -23,14 +23,16 @@ class User(Base):
     age = Column(Integer, nullable=True)
     aadhar_number = Column(String, nullable=True)
     address = Column(String, nullable=True)  # User's address
-    avatar_url = Column(String, nullable=True) # URL/Path to uploaded image
-    avatar_id = Column(Integer, default=1) # Fallback ID
+    avatar_url = Column(String, nullable=True)  # URL/Path to uploaded image
+    avatar_id = Column(Integer, default=1)  # Fallback ID
     password = Column(String, nullable=True)  # Nullable for social login users
     role = Column(String, default="USER")  # USER or POLICE
 
     contacts = relationship("Contact", back_populates="user", cascade="all, delete")
     history = relationship("History", back_populates="user", cascade="all, delete")
-    notifications = relationship("Notification", back_populates="user", cascade="all, delete")
+    notifications = relationship(
+        "Notification", back_populates="user", cascade="all, delete"
+    )
 
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     last_active_at = Column(TIMESTAMP(timezone=True), nullable=True)
@@ -43,11 +45,12 @@ class Notification(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     title = Column(String, nullable=False)
     message = Column(String, nullable=False)
-    type = Column(String, default="info") # info, warning, alert
+    type = Column(String, default="info")  # info, warning, alert
     is_read = Column(Boolean, default=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="notifications")
+
 
 class Contact(Base):
     __tablename__ = "contacts"
@@ -59,7 +62,6 @@ class Contact(Base):
     email = Column(String, nullable=True)  # Email for emergency contact
     relation = Column(String)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
-
 
     user = relationship("User", back_populates="contacts")
 
@@ -76,3 +78,23 @@ class History(Base):
     user = relationship("User", back_populates="history")
 
 
+class Tracker(Base):
+    """ESP32 AirTag tracker linked to a user for failsafe location."""
+
+    __tablename__ = "trackers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    device_name = Column(String, default="ESP32 Tracker")
+    device_code = Column(
+        String, unique=True, nullable=False
+    )  # short code for linking (e.g. "TRK-001")
+    private_key_path = Column(String, nullable=False)  # path to .pem file
+    adv_key_b64 = Column(String, nullable=True)  # base64 advertisement key
+    last_latitude = Column(String, nullable=True)
+    last_longitude = Column(String, nullable=True)
+    last_seen = Column(TIMESTAMP(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="trackers")

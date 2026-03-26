@@ -7,5 +7,8 @@ Werkzeug
 gevent
 gevent-websocket
 twilio
-gunicorn
+FindMy
+cryptography
+apscheduler
 psycopg2-binary
+gunicorn 
