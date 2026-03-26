@@ -26,13 +26,9 @@ from database import Base, engine, SessionLocal
 SECRET_KEY = os.getenv("SECRET_KEY", "YOUR_SECRET_KEY")
 
 # Police Webhook URLs - configure these to your police backend endpoints
-POLICE_ALERT_WEBHOOK = os.getenv(
-    "POLICE_ALERT_WEBHOOK", "https://safeguard-police.loca.lt/api/receive_alert.php"
-)
-POLICE_LOCATION_WEBHOOK = os.getenv(
-    "POLICE_LOCATION_WEBHOOK",
-    "https://safeguard-police.loca.lt/api/update_location.php",
-)
+POLICE_ALERT_WEBHOOK = os.getenv("POLICE_ALERT_WEBHOOK")
+POLICE_LOCATION_WEBHOOK = os.getenv("POLICE_LOCATION_WEBHOOK")
+
 
 app = Flask(__name__)
 CORS(app)
@@ -1330,7 +1326,7 @@ from datetime import datetime, timedelta
 if __name__ == "__main__":
     # Use socketio.run instead of app.run for Socket.IO support.
     # Bind to 0.0.0.0 so external clients (Render / mobile devices) can reach it.
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 10000))
     host = os.getenv("HOST", "0.0.0.0")
 
     print("\n" + "=" * 50)
